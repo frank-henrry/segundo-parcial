@@ -55,3 +55,19 @@
 - **Agentes:** `desarrolladorfront` → `tester` → `revisor`.
 - **Cambios:** `frontend/` (`package.json`, `vite.config.js`, `index.html`, `src/{main,App}.jsx`, `src/api/client.js`, `src/components/{CatalogoPanel,OrdenesPanel}.jsx`, `src/styles.css`, `src/App.test.jsx`).
 - **Veredicto:** `APROBADO` (`progress/review_08.md`). `FE-T01..T06` verdes con Vitest y `npm run build` OK.
+
+## 2026-11-17 — Feature 9: contenedores-local (`SPEC-09`)
+- **Agentes:** `devops` → `tester` → `revisor`.
+- **Cambios:** `services/{catalogo,ordenes}-service/Dockerfile`, `frontend/{Dockerfile,nginx.conf}`, `docker-compose.yml` (puerto `8081` en host, redes aisladas por BD) y `tests/e2e/contenedores.test.js`.
+- **Veredicto:** `APROBADO` (`progress/review_09.md`). `CNT-T01..T02` verdes sobre `http://localhost:8081`.
+
+## 2026-11-18 — Feature 10: kubernetes (`SPEC-10`)
+- **Agentes:** `devops` → `revisor`.
+- **Cambios:** `infra/k8s/` (`00-namespace.yaml`..`08-ingress.yaml`, `README.md`) con `StatefulSet`+`PVC` separados para `db-catalogo` y `db-ordenes`, `02-secrets.example.yaml`, `ClusterIP` e Ingress Traefik.
+- **Veredicto:** `APROBADO CON OBSERVACIONES` (`progress/review_10.md`: YAML offline válido; `kubectl apply --dry-run=client` requiere kubeconfig de clúster k3s activo).
+
+## 2026-11-18 — Feature 11: aws-terraform-k3s (`SPEC-11`)
+- **Agentes:** `devops` → `revisor`.
+- **Cambios:** `infra/terraform/ec2/{providers,variables,main,outputs}.tf`, `terraform.tfvars.example`, `user-data.sh.tftpl`, `README.md` y `.github/workflows/ci-cd.yml`.
+- **Veredicto:** `APROBADO CON OBSERVACIONES` (`progress/review_11.md`: Terraform `fmt`/`validate` no se ejecutaron en local por binario `D:\TERRAFON\terraform.exe` incompatible; validación pendiente en CI/entorno con Terraform válido).
+- **Cierre:** 12/12 features en `done`. `bash init.sh` en verde.

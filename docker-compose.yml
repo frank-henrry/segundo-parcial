@@ -11,6 +11,7 @@ services:
       - "5433:5432"
     volumes:
       - db_catalogo_data:/var/lib/postgresql/data
+      - ./services/catalogo-service/db/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
     networks:
       - catalogo-net
     healthcheck:
@@ -32,6 +33,7 @@ services:
       - "5434:5432"
     volumes:
       - db_ordenes_data:/var/lib/postgresql/data
+      - ./services/ordenes-service/db/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
     networks:
       - ordenes-net
     healthcheck:
@@ -41,6 +43,73 @@ services:
       retries: 10
       start_period: 10s
 
+  catalogo-service:
+    build:
+      context: ./services/catalogo-service
+      dockerfile: Dockerfile
+    container_name: catalogo-service
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://catalogo_user:catalogo_local_password@db-catalogo:5432/catalogo
+      PORT: "8001"
+    expose:
+      - "8001"
+    depends_on:
+      db-catalogo:
+        condition: service_healthy
+    networks:
+      - catalogo-net
+      - app-net
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+  ordenes-service:
+    build:
+      context: ./services/ordenes-service
+      dockerfile: Dockerfile
+    container_name: ordenes-service
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgres://ordenes_user:ordenes_local_password@db-ordenes:5432/ordenes
+      PORT: "3001"
+      CATALOGO_URL: http://catalogo-service:8001
+    expose:
+      - "3001"
+    depends_on:
+      db-ordenes:
+        condition: service_healthy
+      catalogo-service:
+        condition: service_healthy
+    networks:
+      - ordenes-net
+      - app-net
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3001/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: frontend
+    restart: unless-stopped
+    ports:
+      - "8081:80"
+    depends_on:
+      catalogo-service:
+        condition: service_healthy
+      ordenes-service:
+        condition: service_healthy
+    networks:
+      - app-net
+
 volumes:
   db_catalogo_data:
   db_ordenes_data:
@@ -49,4 +118,6 @@ networks:
   catalogo-net:
     driver: bridge
   ordenes-net:
+    driver: bridge
+  app-net:
     driver: bridge

@@ -8,7 +8,7 @@ Sistema E-Commerce ligero compuesto por **dos microservicios independientes en d
 |---|---|---|---|
 | `services/catalogo-service/` | Python 3.12 + FastAPI | PostgreSQL 16 (`db-catalogo`) | `8001` |
 | `services/ordenes-service/` | Node.js 22 + Express 4 | PostgreSQL 16 (`db-ordenes`) | `3001` |
-| `frontend/` | React 18 + Vite + Nginx | — | `80` / `8080` |
+| `frontend/` | React 18 + Vite + Nginx | — | `80` / `8081` |
 | `infra/k8s/` | Kubernetes (StatefulSets, Deployments, Services, Ingress) | PVCs separados | `80` (Ingress) |
 | `infra/terraform/ec2/` | Terraform AWS (VPC, EC2, k3s, IAM SSM, EIP) | — | — |
 

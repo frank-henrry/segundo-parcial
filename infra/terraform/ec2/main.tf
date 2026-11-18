@@ -59,19 +59,38 @@ resource "aws_route_table_association" "public" {
 
 resource "aws_security_group" "web" {
   name        = "${local.name}-web"
-  description = "Permite HTTP; SSM usa conexiones salientes HTTPS."
+  description = "Permite HTTP/HTTPS y API k3s opcional; SSM usa conexiones salientes HTTPS."
   vpc_id      = aws_vpc.main.id
 
   ingress {
-    description = "HTTP del frontend Nginx"
+    description = "HTTP hacia Traefik Ingress de k3s"
     from_port   = 80
     to_port     = 80
     protocol    = "tcp"
     cidr_blocks = [var.allowed_http_cidr]
   }
 
+  ingress {
+    description = "HTTPS opcional hacia Traefik Ingress de k3s"
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = [var.allowed_http_cidr]
+  }
+
+  dynamic "ingress" {
+    for_each = var.allowed_k8s_api_cidr != "" ? [var.allowed_k8s_api_cidr] : []
+    content {
+      description = "API de k3s (puerto 6443) restringida a allowed_k8s_api_cidr"
+      from_port   = 6443
+      to_port     = 6443
+      protocol    = "tcp"
+      cidr_blocks = [ingress.value]
+    }
+  }
+
   egress {
-    description = "Salida necesaria para SSM, bootstrap y descarga de imágenes"
+    description = "Salida necesaria para SSM, instalacion de k3s y descarga de imagenes"
     from_port   = 0
     to_port     = 0
     protocol    = "-1"
@@ -117,7 +136,8 @@ resource "aws_instance" "app" {
   iam_instance_profile        = aws_iam_instance_profile.ssm.name
   associate_public_ip_address = true
   user_data                   = templatefile("${path.module}/user-data.sh.tftpl", {
-    project_dir = "/opt/evaluacion-2"
+    project_dir = "/opt/ecommerce"
+    k3s_version = var.k3s_version
   })
   user_data_replace_on_change = true
 

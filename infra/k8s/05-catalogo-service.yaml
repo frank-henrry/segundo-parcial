@@ -1,0 +1,89 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: catalogo-service
+  namespace: ecommerce
+  labels:
+    app.kubernetes.io/name: catalogo-service
+    app.kubernetes.io/part-of: ecommerce-k8s
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: catalogo-service
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: catalogo-service
+        app.kubernetes.io/part-of: ecommerce-k8s
+    spec:
+      containers:
+        - name: catalogo-service
+          image: ghcr.io/<OWNER>/catalogo-service:<TAG>
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8001
+          env:
+            - name: PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: ecommerce-config
+                  key: CATALOGO_PORT
+            - name: POSTGRES_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: ecommerce-config
+                  key: POSTGRES_CATALOGO_USER
+            - name: POSTGRES_DB
+              valueFrom:
+                configMapKeyRef:
+                  name: ecommerce-config
+                  key: POSTGRES_CATALOGO_DB
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: db-catalogo-secret
+                  key: POSTGRES_PASSWORD
+            - name: DATABASE_URL
+              value: "postgresql://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@db-catalogo:5432/$(POSTGRES_DB)"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8001
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8001
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "128Mi"
+            limits:
+              cpu: "300m"
+              memory: "256Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: catalogo-service
+  namespace: ecommerce
+  labels:
+    app.kubernetes.io/name: catalogo-service
+    app.kubernetes.io/part-of: ecommerce-k8s
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: catalogo-service
+  ports:
+    - name: http
+      port: 8001
+      targetPort: 8001

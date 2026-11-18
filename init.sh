@@ -150,7 +150,15 @@ if [ -d infra/terraform ]; then
 fi
 
 if [ -d infra/k8s ]; then
-  if command -v kubectl >/dev/null 2>&1; then
+  if command -v python >/dev/null 2>&1; then
+    if python -c "import glob, yaml; [list(yaml.safe_load_all(open(f, encoding='utf-8'))) for f in sorted(glob.glob('infra/k8s/*.yaml'))]" >/dev/null 2>&1; then
+      ok "Manifiestos YAML válidos en infra/k8s/ (offline)"
+    else
+      fail "Error de sintaxis YAML en infra/k8s/"
+      EXIT_CODE=1
+    fi
+  fi
+  if command -v kubectl >/dev/null 2>&1 && kubectl config current-context >/dev/null 2>&1; then
     if kubectl apply --dry-run=client -f infra/k8s/ >/dev/null 2>&1; then
       ok "kubectl dry-run OK en infra/k8s/"
     else
@@ -158,7 +166,7 @@ if [ -d infra/k8s ]; then
       EXIT_CODE=1
     fi
   else
-    warn "kubectl no disponible en PATH (se omite dry-run de infra/k8s/)"
+    warn "Sin contexto kubeconfig activo: se omite kubectl apply --dry-run=client"
   fi
 fi
 

@@ -1,300 +1,210 @@
-# Desplegar la demo en AWS EC2
+# Despliegue de ecommerce-k8s en AWS EC2 con k3s (Terraform)
 
-Esta guía ofrece dos caminos alternativos para ejecutar `compose.prod.yml` en Amazon Linux 2023:
+Guía paso a paso para aprovisionar en **tu propia cuenta de AWS** una instancia EC2 (`t3.small` mínimo, 2 GB RAM) dentro de una VPC dedicada con IP elástica (EIP), IMDSv2 obligatorio, volumen raíz `gp3` cifrado (`>= 30 GiB`), administración vía **AWS Systems Manager (SSM)** y **k3s (Kubernetes + Traefik)** preinstalado para desplegar los manifiestos de `infra/k8s/`.
 
-1. **Terraform:** crea una VPC dedicada y una EC2 preparada para administrar con Systems Manager (SSM).
-2. **EC2 manual:** creas la instancia y su red desde la consola de AWS, y luego instalas Docker.
+> **Regla de seguridad (TFK-R01..R04):**
+> - Nunca guardes credenciales AWS (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`), account IDs, claves `.pem` ni contraseñas en Git.
+> - Nunca subas `terraform.tfvars` ni `*.tfstate*` (están excluidos en `.gitignore`).
+> - No abras SSH (`22`) ni PostgreSQL (`5432`) a Internet. El puerto `6443` (API k3s) permanece **cerrado por defecto** (`allowed_k8s_api_cidr = ""`).
 
-En ambos casos el despliegue de la aplicación es manual: Terraform y la consola no publican ni descargan imágenes por sí solos. Es una demo de una sola instancia, no una configuración lista para producción. La región predeterminada de Terraform es `us-east-1`; revisa precios y disponibilidad.
+---
 
-## Requisitos comunes
+## 1. Requisitos previos
 
-- Cuenta AWS con permisos para crear/administrar los recursos que elijas.
-- AWS CLI configurada y Terraform CLI 1.6 o posterior para la ruta Terraform.
-- Docker Compose para desarrollo local no es necesario en el servidor: la instancia lo instalará.
-- Un commit de `main` cuyo CI terminó correctamente y cuyas imágenes ya se publicaron en GHCR. El workflow `CD - GHCR y despliegue aprobado` publica imágenes, pero no despliega automáticamente a esta EC2.
-- Permisos de lectura de GHCR si los paquetes son privados.
+1. Cuenta AWS propia con permisos para VPC, EC2, IAM, SSM y Elastic IP.
+2. [AWS CLI v2](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) y [Session Manager Plugin](https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html) instalados localmente.
+3. [Terraform CLI](https://developer.hashicorp.com/terraform/install) `>= 1.6.0, < 2.0.0`.
+4. Imágenes de `catalogo-service`, `ordenes-service` y `ecommerce-frontend` publicadas en GHCR (automático en `main` tras aprobar el job `cd` de `.github/workflows/ci-cd.yml`).
 
-No guardes credenciales AWS, tokens de GHCR ni secretos de la aplicación en Git, Terraform, `user-data` o comandos que los dejen en el historial. Para administrar la instancia se recomienda SSM; no hace falta abrir SSH en ninguno de los dos caminos.
+---
 
-## Paso 1: publicar y elegir las imágenes
+## 2. Configurar acceso a tu cuenta AWS
 
-En GitHub, comprueba que CI para el commit de `main` haya pasado y que las imágenes del mismo commit estén publicadas. El tag sigue el formato `sha-` más el SHA completo de 40 caracteres, por ejemplo `sha-<SHA-completo>`. Anota ese tag; usarás el mismo para backend y frontend.
+Elige **una** de las dos opciones locales (ninguna escribe secretos en el repo):
 
-El owner de GHCR es el owner del repositorio en minúsculas. Para este repositorio:
+### Opción A: Perfil dedicado (`var.aws_profile`)
 
 ```bash
-export GHCR_OWNER='renzoayvar'
-export IMAGE_TAG='sha-<SHA-completo-publicado>'
+# Credenciales IAM estándar
+aws configure --profile mi-cuenta-aws
+
+# O con IAM Identity Center (SSO)
+aws sso login --profile mi-cuenta-aws
 ```
 
-Si GHCR es privado, inicia sesión en Docker **desde la instancia** con un token de GitHub de alcance mínimo `read:packages`. Ejecuta `sudo docker login ghcr.io`; Docker solicitará el usuario y luego la contraseña. Usa el token como contraseña y no lo incluyas directamente en el comando.
+Luego coloca `aws_profile = "mi-cuenta-aws"` en tu `terraform.tfvars` local (ver paso 3).
 
-## Opción A: crear la infraestructura con Terraform
+### Opción B: Perfil por defecto o variables de entorno de sesión
 
-### A.1 Configurar y revisar
-
-En PowerShell, desde la raíz del repositorio:
-
-```powershell
-Set-Location .\infra\terraform\ec2
-Copy-Item .\terraform.tfvars.example .\terraform.tfvars
-notepad .\terraform.tfvars
+```bash
+aws configure
+# o exporta AWS_PROFILE / credenciales temporales en tu terminal local
 ```
 
-Revisa al menos `aws_region` y `allowed_http_cidr`. Limita este último a tu IP/red de prueba en formato CIDR (por ejemplo, `203.0.113.10/32`) cuando corresponda. El valor `0.0.0.0/0` permite que cualquiera en Internet intente acceder al sitio HTTP.
+Deja `aws_profile = ""` en `terraform.tfvars` para que Terraform use la cadena estándar del SDK de AWS.
 
-Si usas un perfil de AWS o IAM Identity Center/SSO, autentícate antes de Terraform; por ejemplo:
+Verifica siempre la cuenta activa antes de continuar:
 
-```powershell
-aws sso login --profile mi-perfil
-$env:AWS_PROFILE = 'mi-perfil'
+```bash
+aws sts get-caller-identity
 ```
 
-Reemplaza `mi-perfil` por el nombre configurado en AWS CLI.
+---
 
-Inicializa y valida, y revisa cuidadosamente el plan antes de crear recursos:
+## 3. Preparar `terraform.tfvars` (local, no versionado)
 
-```powershell
+Desde `infra/terraform/ec2/`:
+
+```bash
+cp terraform.tfvars.example terraform.tfvars
+```
+
+Edita `terraform.tfvars` y revisa cada valor:
+
+- `aws_region`: región AWS deseada (default `"us-east-1"`).
+- `aws_profile`: nombre de tu perfil AWS CLI local (o `""` si usas el entorno por defecto).
+- `project_name`: prefijo de recursos y tags (default `"ecommerce-k3s"`).
+- `instance_type`: `"t3.small"` mínimo (2 GB RAM para k3s + `db-catalogo` + `db-ordenes` + 3 pods).
+- `root_volume_size`: `30` GiB mínimo (`gp3` cifrado).
+- `allowed_http_cidr`: se recomienda restringir a tu IP pública en CIDR (p. ej. `"203.0.113.10/32"`) durante pruebas; `"0.0.0.0/0"` publica HTTP/HTTPS en Internet.
+- `allowed_k8s_api_cidr`: déjalo en `""` (cerrado). Solo asígnale tu IP `/32` si necesitas usar `kubectl` remoto fuera de SSM.
+- `k3s_version`: versión de k3s (default `"v1.31.4+k3s1"`).
+
+---
+
+## 4. Inicializar, validar y aplicar Terraform
+
+```bash
+cd infra/terraform/ec2
+
 terraform init
 terraform fmt -check
 terraform validate
 terraform plan -var-file="terraform.tfvars"
 ```
 
-### A.2 Crear la EC2 y conectarse
+Revisa cuidadosamente la cuenta, región y recursos en el `plan`. Cuando estés seguro, aplica **sin** `-auto-approve`:
 
-Solo después de revisar la cuenta, región y recursos del plan:
-
-```powershell
+```bash
 terraform apply -var-file="terraform.tfvars"
 ```
 
-Confirma la operación cuando Terraform lo solicite. No uses `-auto-approve`. Al terminar, consulta los datos de conexión:
+Al finalizar, consulta los outputs del contrato:
 
-```powershell
+```bash
 terraform output
-$instanceId = terraform output -raw instance_id
-$region = terraform output -raw aws_region
-aws ssm start-session --target $instanceId --region $region
 ```
 
-También puedes abrir Session Manager desde la consola AWS. La identidad que ejecuta la sesión necesita permisos de SSM; el perfil IAM de la instancia creado por Terraform le permite registrarse en Systems Manager. El bootstrap instala Docker y Compose. Si SSM aún no muestra la instancia como administrada, espera unos minutos y revisa el estado de la instancia y el log `/var/log/user-data-bootstrap.log`.
+Outputs expuestos:
+- `public_ip`
+- `url` (`http://<public_ip>`)
+- `instance_id`
+- `aws_region`
+- `ssm_connect_command`
 
-La URL y la IP pública se consultan con:
+---
 
-```powershell
-terraform output url
-terraform output public_ip
-```
+## 5. Conectarse vía SSM y verificar k3s
 
-### A.3 Preparar archivos en el servidor
-
-Terraform no copia archivos ni inicia la aplicación. En la sesión SSM, crea el directorio y coloca la versión aprobada de `compose.prod.yml` en `/opt/evaluacion-2/compose.prod.yml` mediante el canal operativo aprobado. Crea también `/opt/evaluacion-2/backend/`.
-
-Si el repositorio es público, puedes descargar el Compose del mismo commit de las imágenes. En la sesión SSM:
+Espera ~2–3 minutos a que termine el bootstrap e inicia sesión por SSM (sin abrir puerto 22):
 
 ```bash
-export GHCR_OWNER='renzoayvar'
-export IMAGE_TAG='sha-<SHA-completo-publicado>'
-COMMIT_SHA="${IMAGE_TAG#sha-}"
-sudo curl --fail --location \
-  "https://raw.githubusercontent.com/RenzoAyvar/Gestor_Tareas/${COMMIT_SHA}/compose.prod.yml" \
-  --output /opt/evaluacion-2/compose.prod.yml
-sudo chmod 0644 /opt/evaluacion-2/compose.prod.yml
+# Usa el comando exacto mostrado en `terraform output ssm_connect_command`
+aws ssm start-session --target "$(terraform output -raw instance_id)" --region "$(terraform output -raw aws_region)"
 ```
 
-Reemplaza el placeholder por el SHA real. Para un repositorio privado, usa un mecanismo de transferencia aprobado; no añadas credenciales de GitHub a la URL ni al `user-data`.
-
-Continúa con el [paso 3: configurar y ejecutar la aplicación](#paso-3-configurar-y-ejecutar-la-aplicación).
-
-## Opción B: crear una EC2 manualmente
-
-### B.1 Lanzar la instancia
-
-En la consola AWS, abre **EC2 → Launch instance** y configura:
-
-1. Nombre descriptivo para la demo.
-2. AMI **Amazon Linux 2023**, arquitectura **64-bit (x86)**.
-3. Tipo `t3.small` como punto de partida; revisa costos y dimensiona según necesidad.
-4. Una VPC/subred pública con ruta a un Internet Gateway y una IPv4 pública. Si no tienes una VPC predeterminada, crea una VPC, una subred pública y una ruta al Internet Gateway. Asigna una Elastic IP si necesitas conservar la dirección al reemplazar o detener la instancia.
-5. Disco raíz EBS gp3 cifrado, de al menos 30 GiB.
-6. Un Security Group con entrada TCP/80 limitada a tu IP/red de prueba. No abras PostgreSQL (5432), backend (8000) ni SSH (22) a Internet. La salida debe permitir HTTPS para SSM y descargar paquetes/imágenes.
-7. Un perfil IAM de instancia que incluya `AmazonSSMManagedInstanceCore`. La identidad operadora también necesita permisos para iniciar una sesión SSM.
-
-Inicia la instancia y espera a que aparezca como **Managed node** en Systems Manager. Si usas una instancia existente, verifica igualmente arquitectura, red pública, reglas del Security Group, perfil IAM y espacio disponible.
-
-### B.2 Instalar Docker y Compose
-
-Conéctate mediante **EC2 → Connect → Session Manager** o AWS CLI:
-
-```powershell
-aws ssm start-session --target i-0123456789abcdef0 --region us-east-1
-```
-
-Reemplaza el ID y la región del ejemplo por los de tu instancia.
-
-En la terminal Linux de EC2 instala Docker y el plugin de Compose (el mismo mecanismo y versión que usa el bootstrap Terraform):
+Dentro de la instancia EC2, comprueba el log de bootstrap y el clúster k3s:
 
 ```bash
-sudo dnf install -y docker curl
-sudo install -d -m 0755 /usr/local/lib/docker/cli-plugins
-sudo curl --fail --show-error --silent --location --retry 5 \
-  "https://github.com/docker/compose/releases/download/v2.32.4/docker-compose-linux-x86_64" \
-  --output /usr/local/lib/docker/cli-plugins/docker-compose
-sudo chmod 0755 /usr/local/lib/docker/cli-plugins/docker-compose
-sudo systemctl enable --now docker
-sudo docker compose version
+sudo tail -n 50 /var/log/user-data-bootstrap.log
+export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+kubectl get nodes
+kubectl get pods -A
 ```
 
-Crea los directorios y copia `/opt/evaluacion-2/compose.prod.yml` desde una fuente aprobada:
+El nodo debe aparecer en estado `Ready` y el pod de `traefik` en `kube-system` debe estar `Running`. El directorio `/opt/ecommerce/k8s` ya habrá sido creado.
+
+---
+
+## 6. Desplegar `infra/k8s/` en el clúster k3s
+
+1. Copia los manifiestos de `infra/k8s/` del repositorio hacia `/opt/ecommerce/k8s` (por ejemplo clonando el repo en `/tmp/repo` y copiando `infra/k8s/*.yaml` a `/opt/ecommerce/k8s/` dentro de la sesión SSM):
+
+   ```bash
+   cd /opt/ecommerce/k8s
+   ```
+
+2. Crea el namespace:
+
+   ```bash
+   kubectl apply -f 00-namespace.yaml
+   ```
+
+3. **Crea los Secrets reales directamente en el clúster** (nunca apliques `02-secrets.example.yaml` con contraseñas reales en Git):
+
+   ```bash
+   kubectl create secret generic db-catalogo-secret \
+     -n ecommerce \
+     --from-literal=POSTGRES_PASSWORD='<PASSWORD_FUERTE_CATALOGO>'
+
+   kubectl create secret generic db-ordenes-secret \
+     -n ecommerce \
+     --from-literal=POSTGRES_PASSWORD='<PASSWORD_FUERTE_ORDENES>'
+   ```
+
+   Si tus paquetes en GHCR son privados, crea también el `imagePullSecret` y referéncialo o configura autenticación de registry en k3s sin guardar tokens en Git.
+
+4. Aplica la configuración no sensible y ambas bases de datos PostgreSQL aisladas:
+
+   ```bash
+   kubectl apply -f 01-configmap.yaml
+   kubectl apply -f 03-db-catalogo.yaml
+   kubectl apply -f 04-db-ordenes.yaml
+
+   kubectl rollout status statefulset/db-catalogo -n ecommerce
+   kubectl rollout status statefulset/db-ordenes -n ecommerce
+   ```
+
+5. Despliega los microservicios y el frontend sustituyendo `<OWNER>` (en minúsculas) y `<TAG>` (p. ej. `sha-<SHA>` o `latest`):
+
+   ```bash
+   export GHCR_OWNER='tu-owner-github'
+   export IMAGE_TAG='latest'
+
+   for f in 05-catalogo-service.yaml 06-ordenes-service.yaml 07-frontend.yaml; do
+     sed "s|<OWNER>|${GHCR_OWNER}|g; s|<TAG>|${IMAGE_TAG}|g" "$f" | kubectl apply -f -
+   done
+
+   kubectl apply -f 08-ingress.yaml
+   ```
+
+6. Verifica pods, servicios e Ingress:
+
+   ```bash
+   kubectl get pods,svc,pvc,ingress -n ecommerce
+   ```
+
+   Desde tu máquina local, abre `terraform output -raw url` en el navegador o prueba los endpoints:
+
+   ```bash
+   URL=$(terraform output -raw url)
+   curl -s "${URL}/api/catalogo/health"
+   curl -s "${URL}/api/ordenes/health"
+   curl -I "${URL}/"
+   ```
+
+---
+
+## 7. Destruir recursos y evitar cargos (`terraform destroy`)
+
+Cuando termines tus pruebas, elimina toda la infraestructura creada con Terraform (con el mismo `terraform.tfvars` y estado local):
 
 ```bash
-sudo install -d -m 0750 /opt/evaluacion-2/backend
-sudo chown -R ec2-user:ec2-user /opt/evaluacion-2
-```
-
-Si el repositorio es público, también puedes descargar `compose.prod.yml` desde el mismo commit que las imágenes, usando el comando `curl` de la opción Terraform. Para subirlo desde Windows con SCP, configura un par de claves y permite temporalmente TCP/22 **solo desde tu IP `/32`**; desde la raíz del repositorio ejecuta:
-
-```powershell
-$publicIp = '203.0.113.10'
-scp -i .\mi-clave.pem .\compose.prod.yml "ec2-user@${publicIp}:/tmp/compose.prod.yml"
-```
-
-Sustituye `203.0.113.10` por la IPv4 pública real.
-
-Luego, en la sesión SSM, instala el archivo y cierra el acceso SSH temporal:
-
-```bash
-sudo install -o root -g root -m 0644 /tmp/compose.prod.yml /opt/evaluacion-2/compose.prod.yml
-rm -f /tmp/compose.prod.yml
-```
-
-No abras SSH si puedes usar un canal aprobado como repositorio accesible desde la instancia o transferencia administrada. Nunca dejes TCP/22 abierto a `0.0.0.0/0`.
-
-Obtén la URL de la aplicación en la consola EC2 (o consulta la Elastic IP asignada) y continúa con el [paso 3](#paso-3-configurar-y-ejecutar-la-aplicación).
-
-## Paso 3: configurar y ejecutar la aplicación
-
-Estos pasos son comunes a las dos opciones. Ejecuta los comandos en la terminal Linux de EC2, desde `/opt/evaluacion-2`, usando el tag publicado en el paso 1:
-
-```bash
-cd /opt/evaluacion-2
-export GHCR_OWNER='renzoayvar'
-export IMAGE_TAG='sha-<SHA-completo-publicado>'
-```
-
-Crea los archivos de entorno directamente en el servidor. No uses los archivos `.env.example` como si fueran secretos reales. Las contraseñas de PostgreSQL deben ser URL-safe porque `compose.prod.yml` construye `DATABASE_URL` mediante interpolación.
-
-```bash
-sudo install -o root -g root -m 0600 /dev/null /opt/evaluacion-2/.env
-sudo install -o root -g root -m 0600 /dev/null /opt/evaluacion-2/backend/.env
-sudoedit /opt/evaluacion-2/.env
-sudoedit /opt/evaluacion-2/backend/.env
-```
-
-En `/opt/evaluacion-2/.env`, configura solo estos valores:
-
-```dotenv
-POSTGRES_USER=eval2
-POSTGRES_PASSWORD=<secreto-fuerte-url-safe>
-POSTGRES_DB=eval2db
-```
-
-En `/opt/evaluacion-2/backend/.env`, configura:
-
-```dotenv
-JWT_SECRET=<secreto-aleatorio-de-al-menos-32-caracteres>
-JWT_EXPIRE_MINUTES=60
-```
-
-Puedes generar un secreto aleatorio con `openssl rand -hex 32`; copia su salida al archivo sin publicarla ni guardarla en Git. Conserva permisos restringidos:
-
-```bash
-sudo chmod 600 /opt/evaluacion-2/.env /opt/evaluacion-2/backend/.env
-```
-
-Comprueba la configuración y descarga las imágenes:
-
-```bash
-sudo env GHCR_OWNER="$GHCR_OWNER" IMAGE_TAG="$IMAGE_TAG" \
-  docker compose --env-file .env -f compose.prod.yml config --quiet
-sudo env GHCR_OWNER="$GHCR_OWNER" IMAGE_TAG="$IMAGE_TAG" \
-  docker compose --env-file .env -f compose.prod.yml pull
-```
-
-Si las imágenes son privadas, inicia sesión en GHCR como se indica en el paso 1. Ejecuta Docker con `sudo` de forma consistente para que Compose use las mismas credenciales y pueda leer los archivos protegidos.
-
-### Paso 4: inicializar la base y crear un usuario (primera instalación)
-
-La imagen no contiene un usuario predeterminado ni crea tablas automáticamente en producción. Arranca PostgreSQL y crea el esquema explícitamente una sola vez:
-
-```bash
-sudo env GHCR_OWNER="$GHCR_OWNER" IMAGE_TAG="$IMAGE_TAG" \
-  docker compose --env-file .env -f compose.prod.yml up -d db
-sudo env GHCR_OWNER="$GHCR_OWNER" IMAGE_TAG="$IMAGE_TAG" \
-  docker compose --env-file .env -f compose.prod.yml \
-  run --rm -e ALLOW_SCHEMA_INIT=yes backend python -m scripts.init_schema
-```
-
-Si necesitas el usuario inicial, créalo interactivamente; el programa solicita la contraseña sin mostrarla:
-
-```bash
-sudo env GHCR_OWNER="$GHCR_OWNER" IMAGE_TAG="$IMAGE_TAG" \
-  docker compose --env-file .env -f compose.prod.yml \
-  run --rm backend python -m scripts.create_user --correo admin@practica.com
-```
-
-No repitas la inicialización del esquema como mecanismo de migración. Este proyecto de demo aún no incluye Alembic.
-
-### Paso 5: iniciar y comprobar
-
-Inicia los servicios:
-
-```bash
-sudo env GHCR_OWNER="$GHCR_OWNER" IMAGE_TAG="$IMAGE_TAG" \
-  docker compose --env-file .env -f compose.prod.yml up -d --remove-orphans
-sudo env GHCR_OWNER="$GHCR_OWNER" IMAGE_TAG="$IMAGE_TAG" \
-  docker compose --env-file .env -f compose.prod.yml ps
-```
-
-Revisa los logs si algún servicio no queda activo:
-
-```bash
-sudo env GHCR_OWNER="$GHCR_OWNER" IMAGE_TAG="$IMAGE_TAG" \
-  docker compose --env-file .env -f compose.prod.yml logs --tail=100
-```
-
-Abre `http://<IP-pública>` desde una red permitida por el Security Group. El frontend escucha en TCP/80 por defecto. No expongas `/docs`, PostgreSQL ni el puerto interno del backend. Esta demo sirve HTTP, no HTTPS; no la uses para transmitir credenciales por Internet sin añadir TLS y las protecciones necesarias.
-
-## Actualizar o revertir una versión
-
-Selecciona otro tag `sha-<SHA-completo>` que ya esté publicado. En una nueva sesión SSH/SSM, exporta el owner y tag deseados, y repite `docker compose pull` y `docker compose up -d --remove-orphans` del paso 3/5. Para revertir, usa el tag SHA de la versión anterior. No cambies tags entre el pull y el up.
-
-El workflow CD incluido requiere SSH y no es compatible con la instancia Terraform, que deliberadamente no abre SSH. En esta guía el despliegue es manual vía SSM; no cambies el Security Group para habilitar el workflow sin una revisión separada.
-
-## Eliminar recursos y evitar costos
-
-### Entorno creado con Terraform
-
-Desde `infra/terraform/ec2`, con la misma cuenta, perfil, región, `terraform.tfvars` y estado que usaste al crear:
-
-```powershell
+cd infra/terraform/ec2
 terraform destroy -var-file="terraform.tfvars"
 ```
 
-Revisa la cuenta, región y plan de destrucción, y confirma solo si estás seguro. Esto elimina la instancia, la Elastic IP y los recursos administrados por el módulo. El disco raíz se elimina al terminar la instancia. Se borrarán permanentemente la base PostgreSQL, los archivos locales, los `.env` y las imágenes cacheadas; verifica antes cualquier respaldo que necesites. No borres el estado de Terraform antes de destruir.
-
-### Instancia creada manualmente
-
-Termina la instancia desde EC2 y comprueba/elimina los recursos creados para esta demo que no se eliminen con ella, incluidos Elastic IP, volúmenes EBS, snapshots, reglas y perfil IAM dedicado. Verifica en la consola que no queden recursos facturables. La terminación elimina los datos locales si el volumen está configurado para borrarse.
-
-Detener una EC2 no equivale a eliminarla: EBS y algunas direcciones IPv4 pueden seguir generando cargos. AWS también puede facturar uso ya incurrido.
-
-## Límites y riesgos
-
-- Una sola instancia y un solo punto de fallo; PostgreSQL usa un volumen local de EC2, sin backups administrados ni alta disponibilidad.
-- HTTP/IP pública, sin TLS, dominio, balanceador, RDS, NAT ni backend remoto de estado Terraform.
-- El placeholder actual no persiste `tasks.json`.
-- Los secretos y su rotación son responsabilidad del operador.
-- Restringe el CIDR HTTP, protege los `.env`, mantén privadas las credenciales y verifica respaldos antes de destruir.
+> **Importante:**
+> - Revisa el plan de destrucción y confirma manualmente cuando Terraform lo solicite.
+> - Detener la instancia EC2 desde la consola **no** elimina la Elastic IP ni el volumen EBS (siguen generando cargos); usa `terraform destroy` para limpiar todos los recursos.
+> - Destruir la instancia borra permanentemente el volumen raíz y los PVCs locales de `db-catalogo` y `db-ordenes`.

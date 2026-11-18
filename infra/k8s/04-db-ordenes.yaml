@@ -1,0 +1,143 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: db-ordenes-init
+  namespace: ecommerce
+  labels:
+    app.kubernetes.io/name: db-ordenes
+    app.kubernetes.io/part-of: ecommerce-k8s
+data:
+  01-init.sql: |
+    CREATE TABLE IF NOT EXISTS ordenes (
+      id SERIAL PRIMARY KEY,
+      cliente_nombre VARCHAR(160) NOT NULL,
+      cliente_email VARCHAR(255) NOT NULL,
+      estado VARCHAR(32) NOT NULL DEFAULT 'CREADA' CHECK (estado IN ('CREADA', 'PAGADA', 'ENVIADA', 'CANCELADA')),
+      total NUMERIC(12, 2) NOT NULL CHECK (total >= 0),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS orden_items (
+      id SERIAL PRIMARY KEY,
+      orden_id INTEGER NOT NULL REFERENCES ordenes(id) ON DELETE CASCADE,
+      producto_id INTEGER NOT NULL CHECK (producto_id >= 1),
+      nombre_producto VARCHAR(160) NOT NULL,
+      cantidad INTEGER NOT NULL CHECK (cantidad >= 1),
+      precio_unitario NUMERIC(12, 2) NOT NULL CHECK (precio_unitario >= 0),
+      subtotal NUMERIC(12, 2) NOT NULL CHECK (subtotal >= 0)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_ordenes_created_at_id
+      ON ordenes (created_at DESC, id DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_orden_items_orden_id
+      ON orden_items (orden_id);
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: db-ordenes
+  namespace: ecommerce
+  labels:
+    app.kubernetes.io/name: db-ordenes
+    app.kubernetes.io/part-of: ecommerce-k8s
+spec:
+  serviceName: db-ordenes
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: db-ordenes
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: db-ordenes
+        app.kubernetes.io/part-of: ecommerce-k8s
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: postgres
+              containerPort: 5432
+          env:
+            - name: POSTGRES_DB
+              valueFrom:
+                configMapKeyRef:
+                  name: ecommerce-config
+                  key: POSTGRES_ORDENES_DB
+            - name: POSTGRES_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: ecommerce-config
+                  key: POSTGRES_ORDENES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: db-ordenes-secret
+                  key: POSTGRES_PASSWORD
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          readinessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
+          volumeMounts:
+            - name: db-ordenes-data
+              mountPath: /var/lib/postgresql/data
+            - name: init-sql
+              mountPath: /docker-entrypoint-initdb.d
+              readOnly: true
+      volumes:
+        - name: init-sql
+          configMap:
+            name: db-ordenes-init
+  volumeClaimTemplates:
+    - metadata:
+        name: db-ordenes-data
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: 2Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: db-ordenes
+  namespace: ecommerce
+  labels:
+    app.kubernetes.io/name: db-ordenes
+    app.kubernetes.io/part-of: ecommerce-k8s
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: db-ordenes
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432

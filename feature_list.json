@@ -140,10 +140,10 @@
       "title": "Dockerfiles multi-stage, Nginx reverse proxy y Compose E2E",
       "depende_de": [2, 3, 4, 5, 6, 7, 8],
       "acceptance": [
-        "docker compose up -d --build levanta 2 BDs + 2 servicios + front en :8080",
+        "docker compose up -d --build levanta 2 BDs + 2 servicios + front en :8081",
         "CNT-T01 y CNT-T02 pasan end-to-end"
       ],
-      "status": "in_progress"
+      "status": "done"
     },
     {
       "id": 10,
@@ -156,7 +156,7 @@
         "infra/k8s/ pasa validación YAML / kubectl apply --dry-run=client",
         "Ningún Secret real con credenciales se versiona en Git"
       ],
-      "status": "pending"
+      "status": "done"
     },
     {
       "id": 11,
@@ -169,7 +169,7 @@
         "Terraform provisiona VPC + EC2 + k3s + SSM soportando var.aws_profile",
         "terraform fmt -check y terraform validate pasan sin errores"
       ],
-      "status": "pending"
+      "status": "done"
     }
   ]
 }

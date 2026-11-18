@@ -1,0 +1,163 @@
+name: CI/CD ecommerce-k8s
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    name: CI - Tests, Build, YAML & Terraform
+    runs-on: ubuntu-latest
+
+    services:
+      db-catalogo:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: catalogo
+          POSTGRES_USER: catalogo_user
+          POSTGRES_PASSWORD: catalogo_ci_password
+        ports:
+          - "5433:5432"
+        options: >-
+          --health-cmd "pg_isready -U catalogo_user -d catalogo"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+      db-ordenes:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: ordenes
+          POSTGRES_USER: ordenes_user
+          POSTGRES_PASSWORD: ordenes_ci_password
+        ports:
+          - "5434:5432"
+        options: >-
+          --health-cmd "pg_isready -U ordenes_user -d ordenes"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - name: Checkout repositorio
+        uses: actions/checkout@v4
+
+      - name: Configurar Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: services/catalogo-service/requirements.txt
+
+      - name: Instalar dependencias Python y PyYAML
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r services/catalogo-service/requirements.txt pyyaml
+
+      - name: Ejecutar pruebas de catalogo-service (pytest)
+        working-directory: services/catalogo-service
+        env:
+          DATABASE_URL: postgresql://catalogo_user:catalogo_ci_password@localhost:5433/catalogo
+        run: pytest -v
+
+      - name: Configurar Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            services/ordenes-service/package-lock.json
+            frontend/package-lock.json
+
+      - name: Instalar y probar ordenes-service (Jest)
+        working-directory: services/ordenes-service
+        env:
+          DATABASE_URL: postgres://ordenes_user:ordenes_ci_password@localhost:5434/ordenes
+        run: |
+          npm ci
+          npm test
+
+      - name: Instalar, probar y compilar frontend (Vitest + Vite)
+        working-directory: frontend
+        run: |
+          npm ci
+          npm test
+          npm run build
+
+      - name: Validar sintaxis YAML de infra/k8s/
+        run: |
+          python -c "import glob, yaml; files = sorted(glob.glob('infra/k8s/*.yaml')); assert files; [list(yaml.safe_load_all(open(f, encoding='utf-8'))) for f in files]; print(f'OK: {len(files)} manifiestos YAML válidos')"
+
+      - name: Configurar Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "~1.6"
+
+      - name: Validar formato y sintaxis de Terraform
+        run: |
+          terraform fmt -check -recursive infra/terraform
+          terraform -chdir=infra/terraform/ec2 init -backend=false
+          terraform -chdir=infra/terraform/ec2 validate
+
+  cd:
+    name: CD - Build y Push de imágenes a GHCR
+    needs: ci
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repositorio
+        uses: actions/checkout@v4
+
+      - name: Normalizar owner GHCR en minúsculas
+        run: |
+          echo "GHCR_OWNER=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
+
+      - name: Configurar Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Iniciar sesión en GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build y push catalogo-service
+        uses: docker/build-push-action@v6
+        with:
+          context: ./services/catalogo-service
+          push: true
+          tags: |
+            ghcr.io/${{ env.GHCR_OWNER }}/catalogo-service:sha-${{ github.sha }}
+            ghcr.io/${{ env.GHCR_OWNER }}/catalogo-service:latest
+
+      - name: Build y push ordenes-service
+        uses: docker/build-push-action@v6
+        with:
+          context: ./services/ordenes-service
+          push: true
+          tags: |
+            ghcr.io/${{ env.GHCR_OWNER }}/ordenes-service:sha-${{ github.sha }}
+            ghcr.io/${{ env.GHCR_OWNER }}/ordenes-service:latest
+
+      - name: Build y push ecommerce-frontend
+        uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          push: true
+          tags: |
+            ghcr.io/${{ env.GHCR_OWNER }}/ecommerce-frontend:sha-${{ github.sha }}
+            ghcr.io/${{ env.GHCR_OWNER }}/ecommerce-frontend:latest

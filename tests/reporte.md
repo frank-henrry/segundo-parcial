@@ -243,3 +243,33 @@
   - `npm run build` (`vite build`): `34 modules transformed`, `dist/` generado en `580ms`
 - **Cobertura del módulo:** No se ejecutó reporte automático de cobertura porque `@vitest/coverage-v8` / `@vitest/coverage-istanbul` no están declarados en `frontend/package.json` (`devDependencies`), aunque las 6 pruebas `FE-T01..FE-T06` ejercitan los flujos principales de `App.jsx`, `api/client.js`, `CatalogoPanel.jsx` y `OrdenesPanel.jsx`.
 - **Verificación completa de arnés:** `"C:\Program Files\Git\bin\bash.exe" init.sh` en verde (`SPEC-00..08` con pruebas, `117 archivos revisados`, `catalogo-service` `11 passed`, `ordenes-service` `3 suites / 9 passed`, `frontend` `1 file / 6 passed`).
+
+## SPEC-09
+
+- **Spec:** `specs-v2/05-contenedores-local.md`
+- **Feature:** `9 — contenedores-local`
+- **Archivo de prueba:** `tests/e2e/contenedores.test.js` (`node:test` + `node:assert/strict` en Node `v24.12.0`, sin `package.json` en la raíz)
+- **Entorno E2E:** Stack completo levantado con `docker compose down -v && docker compose up -d --build --wait` (`db-catalogo`, `db-ordenes`, `catalogo-service`, `ordenes-service`, `frontend` expuestos en `http://localhost:8081`)
+- **Estado:** `PASS` (`2 passed, 0 failed` en `342.47 ms`; `2/2` casos `CNT-T01..T02` en verde)
+
+### Casos cubiertos
+
+| ID | Caso de prueba | Archivo | Resultado |
+|---|---|---|---|
+| `CNT-T01` | `CNT-T01 Stack completo levanta con docker compose up -d --build y ambos /health responden 200` | `tests/e2e/contenedores.test.js` | PASSED (`145.46 ms`: `GET http://localhost:8081/` `200` HTML, `GET /api/catalogo/health` `200` `{"status":"ok","service":"catalogo-service","db":"up"}`, `GET /api/ordenes/health` `200` `{"status":"ok","service":"ordenes-service","db":"up"}`) |
+| `CNT-T02` | `CNT-T02 Flujo E2E: crear orden vía http://localhost:8081/api/ordenes descuenta stock en /api/catalogo/productos/{id}` | `tests/e2e/contenedores.test.js` | PASSED (`97.45 ms`: producto creado con `stock: 10`, `POST http://localhost:8081/api/ordenes` `201` por `cantidad: 3` y `total: "76.50"`, `GET /api/catalogo/productos/{id}` confirmó `stock: 7`) |
+
+### Casos pendientes
+
+- Ninguno.
+
+### Pruebas fallidas
+
+- Ninguna.
+
+### Cobertura y evidencia
+
+- **Validación Compose:** `docker compose config --quiet` (`exit 0`) y `docker compose down -v && docker compose up -d --build --wait` (`exit 0`; los 5 contenedores en estado `Healthy`).
+- **Prueba E2E:** `node --test tests/e2e/contenedores.test.js` → `2 passed, 0 failed` (`342.47 ms`).
+- **Verificación completa de arnés:** `"C:\Program Files\Git\bin\bash.exe" init.sh` en verde (`124 archivos revisados`, `catalogo-service` `11 passed`, `ordenes-service` `3 suites / 9 passed`, `frontend` `1 file / 6 passed`).
+- **Nota de cobertura:** Las pruebas de `SPEC-09` validan el flujo E2E de infraestructura/proxy (`Docker + Nginx + Compose`); la cobertura unitaria/integración de los servicios y frontend (`>= 80 %` en backend) se reporta en `SPEC-02..SPEC-08`.

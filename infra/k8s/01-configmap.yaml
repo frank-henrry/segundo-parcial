@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ecommerce-config
+  namespace: ecommerce
+  labels:
+    app.kubernetes.io/part-of: ecommerce-k8s
+data:
+  CATALOGO_PORT: "8001"
+  ORDENES_PORT: "3001"
+  CATALOGO_URL: "http://catalogo-service:8001"
+  POSTGRES_CATALOGO_DB: "catalogo"
+  POSTGRES_CATALOGO_USER: "catalogo_user"
+  POSTGRES_ORDENES_DB: "ordenes"
+  POSTGRES_ORDENES_USER: "ordenes_user"

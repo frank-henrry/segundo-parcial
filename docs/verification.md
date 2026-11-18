@@ -30,8 +30,8 @@ bash init.sh --rapido   # verificación rápida usada por hooks
 
 ```bash
 docker compose up -d --build
-curl -s http://localhost:8080/api/catalogo/health
-curl -s http://localhost:8080/api/ordenes/health
+curl -s http://localhost:8081/api/catalogo/health
+curl -s http://localhost:8081/api/ordenes/health
 ```
 
 ## Nivel 4 — Kubernetes & Terraform (sin aplicar cambios reales sin permiso)

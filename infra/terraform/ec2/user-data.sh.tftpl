@@ -3,17 +3,40 @@ set -Eeuo pipefail
 
 exec > >(tee -a /var/log/user-data-bootstrap.log | logger -t user-data -s 2>/dev/console) 2>&1
 
-dnf install -y docker curl
-install -d -m 0755 /usr/local/lib/docker/cli-plugins
-COMPOSE_VERSION="v2.32.4"
-curl --fail --show-error --silent --location --retry 5 \
-  "https://github.com/docker/compose/releases/download/$${COMPOSE_VERSION}/docker-compose-linux-x86_64" \
-  --output /usr/local/lib/docker/cli-plugins/docker-compose
-chmod 0755 /usr/local/lib/docker/cli-plugins/docker-compose
+echo "[bootstrap] Iniciando aprovisionamiento de k3s en ${project_dir}..."
 
-systemctl enable --now docker
-docker compose version
+if ! command -v curl >/dev/null 2>&1; then
+  dnf install -y curl-minimal
+fi
 
-install -d -o ec2-user -g ec2-user "${project_dir}/backend"
-chown -R ec2-user:ec2-user "${project_dir}"
-chmod 0750 "${project_dir}" "${project_dir}/backend"
+if systemctl is-active --quiet k3s; then
+  echo "[bootstrap] k3s ya está activo; omitiendo reinstalación."
+else
+  echo "[bootstrap] Instalando k3s ${k3s_version}..."
+  curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION="${k3s_version}" sh -s - --write-kubeconfig-mode 644
+fi
+
+systemctl enable k3s
+
+cat <<'EOF' > /etc/profile.d/k3s.sh
+export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+EOF
+chmod 0644 /etc/profile.d/k3s.sh
+
+export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+if id ec2-user >/dev/null 2>&1; then
+  install -d -o ec2-user -g ec2-user -m 0700 /home/ec2-user/.kube
+  ln -sf /etc/rancher/k3s/k3s.yaml /home/ec2-user/.kube/config
+fi
+
+echo "[bootstrap] Verificando nodo k3s..."
+for i in $(seq 1 30); do
+  if kubectl get nodes 2>/dev/null | grep -q " Ready"; then
+    break
+  fi
+  sleep 5
+done
+kubectl get nodes
+
+install -d -o ec2-user -g ec2-user -m 0750 "${project_dir}" "${project_dir}/k8s"
+echo "[bootstrap] Bootstrap completado. Manifiestos esperados en ${project_dir}/k8s."
