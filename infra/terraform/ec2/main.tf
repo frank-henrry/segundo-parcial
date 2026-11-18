@@ -135,7 +135,7 @@ resource "aws_instance" "app" {
   vpc_security_group_ids      = [aws_security_group.web.id]
   iam_instance_profile        = aws_iam_instance_profile.ssm.name
   associate_public_ip_address = true
-  user_data                   = templatefile("${path.module}/user-data.sh.tftpl", {
+  user_data = templatefile("${path.module}/user-data.sh.tftpl", {
     project_dir = "/opt/ecommerce"
     k3s_version = var.k3s_version
   })

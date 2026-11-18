@@ -11,7 +11,7 @@ const ARNES = [
 const IGNORADOS = [
   /(^|\/)node_modules(\/|$)/, /^\.git(\/|$)/, /(^|\/)coverage(\/|$)/,
   /(^|\/)(__pycache__|\.pytest_cache|\.venv|venv)(\/|$)/,
-  /(^|\/)dist(\/|$)/, /(^|\/)\.terraform(\/|$)/, /\.tfstate(\.|$)/,
+  /(^|\/)dist(\/|$)/, /(^|\/)\.terraform(\/|$)/, /(^|\/)\.terraform\.lock\.hcl$/, /\.tfstate(\.|$)/,
   /\.tfvars$/, /^tests\/\.tmp(\/|$)/, /^\.env$/, /(^|\/)\.DS_Store$/,
 ];
 
