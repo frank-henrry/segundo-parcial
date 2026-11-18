@@ -1,0 +1,68 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/proteger-specs.js\""
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/pruebas-rapidas.js\"",
+            "timeout": 150
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/verificacion-final.js\"",
+            "timeout": 200
+          }
+        ]
+      }
+    ]
+  },
+  "permissions": {
+    "allow": [
+      "Bash(bash init.sh)",
+      "Bash(bash init.sh --rapido)",
+      "Bash(node .harness/specs.js verificar)",
+      "Bash(node .harness/validar-features.js)",
+      "Bash(node .harness/alcance.js)",
+      "Bash(npm install*)",
+      "Bash(npm test*)",
+      "Bash(npm run *)",
+      "Bash(npx jest*)",
+      "Bash(npx vitest*)",
+      "Bash(pytest*)",
+      "Bash(python -m pytest*)",
+      "Bash(docker compose config*)",
+      "Bash(docker compose up -d db*)",
+      "Bash(docker compose ps*)",
+      "Bash(docker compose logs*)",
+      "Bash(kubectl apply --dry-run=client*)",
+      "Bash(terraform version*)",
+      "Bash(terraform fmt -check*)",
+      "Bash(terraform validate*)",
+      "Bash(terraform init -backend=false*)"
+    ],
+    "deny": [
+      "Bash(node .harness/specs.js generar)",
+      "Bash(terraform apply*-auto-approve*)",
+      "Bash(terraform destroy*-auto-approve*)"
+    ]
+  }
+}

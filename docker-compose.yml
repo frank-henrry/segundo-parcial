@@ -1,0 +1,52 @@
+services:
+  db-catalogo:
+    image: postgres:16-alpine
+    container_name: db-catalogo
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: catalogo
+      POSTGRES_USER: catalogo_user
+      POSTGRES_PASSWORD: catalogo_local_password
+    ports:
+      - "5433:5432"
+    volumes:
+      - db_catalogo_data:/var/lib/postgresql/data
+    networks:
+      - catalogo-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U catalogo_user -d catalogo"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  db-ordenes:
+    image: postgres:16-alpine
+    container_name: db-ordenes
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ordenes
+      POSTGRES_USER: ordenes_user
+      POSTGRES_PASSWORD: ordenes_local_password
+    ports:
+      - "5434:5432"
+    volumes:
+      - db_ordenes_data:/var/lib/postgresql/data
+    networks:
+      - ordenes-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ordenes_user -d ordenes"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+volumes:
+  db_catalogo_data:
+  db_ordenes_data:
+
+networks:
+  catalogo-net:
+    driver: bridge
+  ordenes-net:
+    driver: bridge

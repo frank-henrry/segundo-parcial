@@ -1,0 +1,47 @@
+# Catálogo de componentes y módulos de ecommerce-k8s.
+version: 1
+proyecto: ecommerce-k8s
+
+servicios:
+  - id: catalogo-service
+    lenguaje: python-fastapi
+    bd: postgres-16-catalogo
+    puerto_interno: 8001
+    ruta_base: /api/catalogo
+    modulos:
+      - id: core
+        specs:
+          - services/catalogo-service/specs/core/01-catalogo-core.md
+      - id: productos
+        specs:
+          - services/catalogo-service/specs/productos/01-productos-crud.md
+          - services/catalogo-service/specs/productos/02-stock-reservas.md
+
+  - id: ordenes-service
+    lenguaje: nodejs-express
+    bd: postgres-16-ordenes
+    puerto_interno: 3001
+    ruta_base: /api/ordenes
+    depende_http: [catalogo-service]
+    modulos:
+      - id: core
+        specs:
+          - services/ordenes-service/specs/core/01-ordenes-core.md
+      - id: ordenes
+        specs:
+          - services/ordenes-service/specs/ordenes/01-crear-orden.md
+          - services/ordenes-service/specs/ordenes/02-consultar-estado.md
+
+  - id: frontend
+    lenguaje: react-vite-nginx
+    puerto_interno: 80
+    consume: [catalogo-service, ordenes-service]
+    spec: specs-v2/04-frontend.md
+
+infraestructura:
+  - id: kubernetes
+    ruta: infra/k8s/
+    spec: specs-v2/06-kubernetes.md
+  - id: terraform-k3s-aws
+    ruta: infra/terraform/ec2/
+    spec: specs-v2/07-aws-terraform-k3s.md

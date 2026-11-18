@@ -1,0 +1,175 @@
+{
+  "project": "ecommerce-k8s",
+  "description": "E-Commerce ligero SDD con specs generales en specs-v2/ y specs modulares dentro de cada microservicio (services/*/specs/<modulo>/).",
+  "rules": {
+    "one_feature_at_a_time": true,
+    "require_tests_to_close": true,
+    "require_dependencies_done": true,
+    "max_spec_lines": 150,
+    "valid_status": [
+      "pending",
+      "in_progress",
+      "done",
+      "blocked",
+      "reabierta"
+    ]
+  },
+  "features": [
+    {
+      "id": 0,
+      "spec": "specs-v2/00-infra-terraform-base.md",
+      "prefijo": "TFB",
+      "name": "infra-terraform-base",
+      "title": "Base Terraform EC2 importada (VPC, Subnet, SG, IAM SSM, EIP)",
+      "depende_de": [],
+      "acceptance": [
+        "infra/terraform/ec2/ contiene la base HCL sin terraform.tfvars ni .tfstate",
+        ".gitignore protege .terraform/, *.tfstate*, *.tfvars y claves privadas"
+      ],
+      "status": "done"
+    },
+    {
+      "id": 1,
+      "spec": "specs-v2/01-proyecto-contratos.md",
+      "prefijo": "PRY",
+      "name": "proyecto-contratos",
+      "title": "Contratos REST únicos, reglas globales y docker-compose base (2 BDs, sin .env)",
+      "depende_de": [],
+      "acceptance": [
+        "docker-compose.yml define db-catalogo y db-ordenes en instancias PostgreSQL separadas",
+        "Contratos REST entre servicios y frontend fijados en un solo lugar"
+      ],
+      "status": "done"
+    },
+    {
+      "id": 2,
+      "spec": "services/catalogo-service/specs/core/01-catalogo-core.md",
+      "prefijo": "CATC",
+      "name": "catalogo-core",
+      "title": "catalogo-service / core (FastAPI, config, db-catalogo, errors, /health)",
+      "depende_de": [1],
+      "acceptance": [
+        "GET /health y /api/catalogo/health responden 200 con db-catalogo",
+        "CATC-T01 y CATC-T02 pasan con pytest"
+      ],
+      "status": "done"
+    },
+    {
+      "id": 3,
+      "spec": "services/catalogo-service/specs/productos/01-productos-crud.md",
+      "prefijo": "CATP",
+      "name": "catalogo-productos-crud",
+      "title": "catalogo-service / productos (CRUD: listar, filtrar, detalle, crear)",
+      "depende_de": [2],
+      "acceptance": [
+        "Endpoints CRUD de productos operan sobre db-catalogo aislada",
+        "CATP-T01 a CATP-T05 pasan con pytest contra PostgreSQL real"
+      ],
+      "status": "done"
+    },
+    {
+      "id": 4,
+      "spec": "services/catalogo-service/specs/productos/02-stock-reservas.md",
+      "prefijo": "CATS",
+      "name": "catalogo-stock-reservas",
+      "title": "catalogo-service / productos (actualización de stock y reserva atómica)",
+      "depende_de": [3],
+      "acceptance": [
+        "Reserva atómica SQL sin race conditions",
+        "CATS-T01 a CATS-T04 pasan con pytest contra PostgreSQL real"
+      ],
+      "status": "done"
+    },
+    {
+      "id": 5,
+      "spec": "services/ordenes-service/specs/core/01-ordenes-core.md",
+      "prefijo": "ORDC",
+      "name": "ordenes-core",
+      "title": "ordenes-service / core (Express, config, db-ordenes, errors, catalogoClient)",
+      "depende_de": [1],
+      "acceptance": [
+        "GET /health responde 200 y catalogoClient maneja 200/409/502",
+        "ORDC-T01 y ORDC-T02 pasan con Jest y nock"
+      ],
+      "status": "done"
+    },
+    {
+      "id": 6,
+      "spec": "services/ordenes-service/specs/ordenes/01-crear-orden.md",
+      "prefijo": "ORDN",
+      "name": "ordenes-crear",
+      "title": "ordenes-service / ordenes (POST /api/ordenes con reserva HTTP y Decimal)",
+      "depende_de": [4, 5],
+      "acceptance": [
+        "Calcula totales con Decimal y reserva stock vía HTTP en catalogo-service",
+        "ORDN-T01 a ORDN-T04 pasan con Jest contra db-ordenes y nock"
+      ],
+      "status": "done"
+    },
+    {
+      "id": 7,
+      "spec": "services/ordenes-service/specs/ordenes/02-consultar-estado.md",
+      "prefijo": "ORDQ",
+      "name": "ordenes-consultar",
+      "title": "ordenes-service / ordenes (listar, obtener por ID, actualizar estado)",
+      "depende_de": [6],
+      "acceptance": [
+        "Listado descendente, detalle con items y validación de estados",
+        "ORDQ-T01 a ORDQ-T03 pasan con Jest"
+      ],
+      "status": "done"
+    },
+    {
+      "id": 8,
+      "spec": "specs-v2/04-frontend.md",
+      "prefijo": "FE",
+      "name": "frontend",
+      "title": "Frontend React + Vite consumiendo catalogo-service y ordenes-service",
+      "depende_de": [3, 4, 6, 7],
+      "acceptance": [
+        "Usa rutas relativas /api/catalogo y /api/ordenes sin URLs hardcodeadas",
+        "FE-T01 a FE-T06 pasan con Vitest y npm run build compila sin errores"
+      ],
+      "status": "done"
+    },
+    {
+      "id": 9,
+      "spec": "specs-v2/05-contenedores-local.md",
+      "prefijo": "CNT",
+      "name": "contenedores-local",
+      "title": "Dockerfiles multi-stage, Nginx reverse proxy y Compose E2E",
+      "depende_de": [2, 3, 4, 5, 6, 7, 8],
+      "acceptance": [
+        "docker compose up -d --build levanta 2 BDs + 2 servicios + front en :8080",
+        "CNT-T01 y CNT-T02 pasan end-to-end"
+      ],
+      "status": "in_progress"
+    },
+    {
+      "id": 10,
+      "spec": "specs-v2/06-kubernetes.md",
+      "prefijo": "K8S",
+      "name": "kubernetes",
+      "title": "Manifiestos Kubernetes (StatefulSets 2 BDs, Deployments, Services, Ingress)",
+      "depende_de": [9],
+      "acceptance": [
+        "infra/k8s/ pasa validación YAML / kubectl apply --dry-run=client",
+        "Ningún Secret real con credenciales se versiona en Git"
+      ],
+      "status": "pending"
+    },
+    {
+      "id": 11,
+      "spec": "specs-v2/07-aws-terraform-k3s.md",
+      "prefijo": "TFK",
+      "name": "aws-terraform-k3s",
+      "title": "Terraform AWS con k3s en EC2 (cuenta propia vía aws_profile) + CI/CD GHCR",
+      "depende_de": [0, 10],
+      "acceptance": [
+        "Terraform provisiona VPC + EC2 + k3s + SSM soportando var.aws_profile",
+        "terraform fmt -check y terraform validate pasan sin errores"
+      ],
+      "status": "pending"
+    }
+  ]
+}
